@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>El Milagro - Tienda Online</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="main.js" defer></script>
+</head>
+<body data-theme="light">
+  
+  <header class="header">
+    <div class="header-container">
+      <div class="header-left">
+        <a href="#">
+          <img src="logo.png" alt="El Milagro" class="logo" id="logo">
+        </a>
+
+        <div class="search-wrapper">
+          <input type="search" id="searchInput" placeholder="Buscar productos..." autocomplete="off">
+          <span class="search-icon">🔍</span>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div class="header-categories categories-wrapper" id="categoryContainer">
+          <button class="category-pill active" data-category="all">🛒 Todas</button>
+        </div>
+
+        <!-- Theme Toggle -->
+        <div class="theme-toggle-group">
+          <button class="theme-btn active" data-theme-btn="light" title="Claro">☀️</button>
+          <button class="theme-btn" data-theme-btn="dark" title="Oscuro">🌙</button>
+          <button class="theme-btn glass-btn" data-theme-btn="glass" title="Liquid Glass">🫧</button>
+        </div>
+
+        <button class="btn btn-outline" id="btnTrackOrder" style="padding: 0.5rem 1rem;">📦 Mi Pedido</button>
+
+        <!-- Cart Toggle -->
+        <button class="cart-toggle" id="cartToggleBtn">
+          🛒
+          <span class="cart-badge" id="cartBadge">0</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Destacados -->
+    <section class="featured-section" id="featuredSection" style="display:none;">
+      <h2 class="section-title">✨ Destacados</h2>
+      <div class="featured-slider" id="featuredContainer">
+        <!-- Generado dinamicamente -->
+      </div>
+    </section>
+
+    <!-- Todos los productos -->
+    <section>
+      <h2 class="section-title" id="productsTitle">Nuestros Productos</h2>
+      <div class="product-grid" id="productContainer">
+        <!-- Generado dinamicamente -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Cart Sidebar -->
+  <div class="overlay cart-overlay" id="cartOverlay"></div>
+  <aside class="cart-sidebar glass-panel" id="cartSidebar">
+    <div class="cart-header">
+      <h2>Tu Pedido</h2>
+      <button class="close-cart" id="closeCartBtn">✕</button>
+    </div>
+    
+    <div class="cart-items" id="cartItemsContainer">
+      <!-- Generado dinamicamente -->
+      <div style="text-align:center;color:var(--text-secondary);margin-top:2rem;">El carrito está vacío</div>
+    </div>
+
+    <div class="cart-footer">
+      <div class="cart-total">
+        <span>Total:</span>
+        <span id="cartTotalText">$0.00</span>
+      </div>
+      <button class="btn btn-primary btn-checkout" id="checkoutBtn">Finalizar Compra</button>
+    </div>
+  </aside>
+
+  <!-- Product Detail Modal -->
+  <div class="overlay" id="productModalOverlay"></div>
+  <div class="modal-base product-modal glass-panel" id="productModal">
+    <button class="modal-close" id="modalCloseBtn">✕</button>
+    <img src="" alt="" class="product-modal-img" id="modalImg" onerror="this.src='https://via.placeholder.com/400x300'">
+    <div class="product-modal-info">
+      <span class="product-modal-category" id="modalCategory">Categoría</span>
+      <h2 class="product-modal-title" id="modalTitle">Producto</h2>
+      <p class="product-modal-desc" id="modalDesc">Descripción</p>
+      <div class="product-modal-price" id="modalPrice">$0.00</div>
+      
+      <button class="btn btn-primary" id="modalAddToCartBtn" style="margin-top:auto; font-size: 1.1rem; padding: 1rem;">
+        Agregar al carrito
+      </button>
+    </div>
+  </div>
+
+  <!-- Checkout Modal -->
+  <div class="overlay" id="checkoutModalOverlay"></div>
+  <div class="modal-base checkout-modal" id="checkoutModal">
+    <button class="modal-close" id="checkoutModalCloseBtn">✕</button>
+    <h2>Detalles de Envío</h2>
+    <form id="checkoutForm">
+      <div class="form-group">
+        <label>Nombre y Apellido *</label>
+        <input type="text" id="checkoutName" required placeholder="Ej: Juan Pérez">
+      </div>
+      <div class="form-group">
+        <label>DNI (Sólo números) *</label>
+        <input type="text" id="checkoutDNI" required placeholder="Ej: 34567890 (sin puntos)">
+      </div>
+      <div class="form-group">
+        <label>Teléfono (WhatsApp) *</label>
+        <input type="tel" id="checkoutPhone" required placeholder="Ej: +54 9...">
+      </div>
+      
+      <div class="checkout-grid">
+        <div class="form-group">
+          <label>Zona de Cobertura *</label>
+          <select id="checkoutZone" required>
+            <option value="">Selecciona tu zona</option>
+            <!-- Zonas serán inyectadas por JS -->
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Código Postal *</label>
+          <input type="text" id="checkoutCP" required placeholder="Ej: 4530">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Dirección Exacta *</label>
+        <input type="text" id="checkoutAddress" required placeholder="Calle, Número, Mza, Lote...">
+      </div>
+      
+      <div class="form-group">
+        <label>Método de Pago *</label>
+        <select id="checkoutPayment" required>
+          <option value="">Selecciona método de pago</option>
+          <option value="efectivo">Efectivo en sucursal</option>
+          <option value="transferencia">Transferencia por WhatsApp</option>
+          <option value="debito_credito" disabled>Débito-Crédito (próximamente)</option>
+        </select>
+      </div>
+      
+      <button type="submit" class="btn btn-success" style="width: 100%; margin-top: 1rem; font-size: 1.2rem;">
+        Confirmar y Pedir por WhatsApp
+      </button>
+    </form>
+  </div>
+
+  <!-- Tracking Modal -->
+  <div class="overlay" id="trackingModalOverlay"></div>
+  <div class="modal-base checkout-modal" id="trackingModal" style="max-width: 600px;">
+    <button class="modal-close" id="trackingModalCloseBtn">✕</button>
+    <h2>Seguimiento de Pedido</h2>
+    <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">Ingresá el DNI asociado a la compra para ver su estado más reciente.</p>
+    
+    <div style="display: flex; gap: 1rem; margin-bottom: 2rem;">
+      <input type="text" id="trackingDNI" class="form-group" style="margin: 0; flex: 1;" placeholder="Ej: 34567890 (sin puntos)">
+      <button class="btn btn-primary" id="btnSearchTracking">Buscar</button>
+    </div>
+
+    <div id="trackingResult" style="display: none;">
+      <!-- JavaScript will inject .tracking-container here for each order -->
+    </div>
+    
+    <div id="trackingError" style="display: none; padding: 1rem; background: rgba(255,0,0,0.1); color: var(--rojo); border-radius: var(--border-radius); text-align: center;">
+      No encontramos pedidos recientes con ese número.
+    </div>
+  </div>
+
+  <!-- Ticket de Retiro Modal -->
+  <div class="overlay" id="ticketModalOverlay"></div>
+  <div class="modal-base ticket-modal" id="ticketModal">
+    <button class="modal-close" id="ticketModalCloseBtn">✕</button>
+    <div class="ticket-content">
+      <div class="ticket-header">
+        <h3>TICKET DE RETIRO</h3>
+        <p style="font-size: 0.8rem; color: var(--text-secondary);">Presentar en sucursal/depósito</p>
+      </div>
+      <div class="ticket-body">
+        <div class="ticket-code-label">Código de Pedido</div>
+        <div class="ticket-code-value" id="ticketCode">#00000</div>
+        
+        <div class="ticket-dni-label">DNI Titular</div>
+        <div class="ticket-dni-value" id="ticketDNI">00000000</div>
+      </div>
+      <div class="ticket-footer">
+        Lacteos El Milagro - Calidad y Confianza
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast" id="toastMessage">Acción completada</div>
+
+</body>
+</html>
