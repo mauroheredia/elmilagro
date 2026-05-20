@@ -2,9 +2,10 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>El Milagro - Tienda Online</title>
   <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <script type="module" src="main.js" defer></script>
 </head>
 <body data-theme="light">
@@ -181,24 +182,13 @@
 
   <!-- Ticket de Retiro Modal -->
   <div class="overlay" id="ticketModalOverlay"></div>
-  <div class="modal-base ticket-modal" id="ticketModal">
+  <div class="modal-base checkout-modal" id="ticketModal" style="max-width:400px; text-align:center;">
     <button class="modal-close" id="ticketModalCloseBtn">✕</button>
-    <div class="ticket-content">
-      <div class="ticket-header">
-        <h3>TICKET DE RETIRO</h3>
-        <p style="font-size: 0.8rem; color: var(--text-secondary);">Presentar en sucursal/depósito</p>
-      </div>
-      <div class="ticket-body">
-        <div class="ticket-code-label">Código de Pedido</div>
-        <div class="ticket-code-value" id="ticketCode">#00000</div>
-        
-        <div class="ticket-dni-label">DNI Titular</div>
-        <div class="ticket-dni-value" id="ticketDNI">00000000</div>
-      </div>
-      <div class="ticket-footer">
-        Lacteos El Milagro - Calidad y Confianza
-      </div>
-    </div>
+    <h2>🎟️ Tu Ticket</h2>
+    <p style="font-size:3rem; font-weight:900;" id="ticketCode">#00000</p>
+    <p>DNI: <strong id="ticketDNI"></strong></p>
+    <div id="ticketQR" style="margin: 1.5rem auto; display: flex; justify-content: center; background: white; padding: 10px; width: fit-content; border-radius: 8px;"></div>
+    <p style="color:var(--text-secondary); margin-top:1rem;">Presentá este código en la sucursal o al repartidor para validar tu entrega.</p>
   </div>
 
   <!-- Toast Notification -->

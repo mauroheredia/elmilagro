@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Diagnóstico Firebase Storage - El Milagro</title>
+    <style>
+        body { font-family: sans-serif; padding: 2rem; background: #f4f4f4; }
+        .card { background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .error { color: #dc3545; background: #f8d7da; padding: 1rem; border-radius: 4px; margin-top: 1rem; }
+        .success { color: #28a745; background: #d4edda; padding: 1rem; border-radius: 4px; margin-top: 1rem; }
+        code { background: #eee; padding: 0.2rem 0.4rem; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Prueba de conexión a Storage</h2>
+        <p>Este test intenta leer el archivo <code>catalog/bebidas.json</code> directamente.</p>
+        <button id="btnTest">Ejecutar Test</button>
+        <div id="result"></div>
+    </div>
+
+    <script>
+        const BUCKET = "lacteos-elmilagro.firebasestorage.app";
+        const FILE = "catalog%2Fbebidas.json";
+        const URL = `https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/${FILE}?alt=media`;
+
+        document.getElementById('btnTest').onclick = async () => {
+            const resDiv = document.getElementById('result');
+            resDiv.innerHTML = '<p>Cargando...</p>';
+            
+            try {
+                console.log("Intentando fetch a:", URL);
+                const response = await fetch(URL);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    resDiv.innerHTML = `
+                        <div class="success">
+                            <strong>✅ ÉXITO:</strong> El archivo se leyó correctamente.<br>
+                            Productos encontrados: ${data.products ? data.products.length : 0}
+                        </div>
+                    `;
+                } else {
+                    let msg = "";
+                    if (response.status === 403) msg = "<strong>🚫 Error 403 (Prohibido):</strong> El archivo no es público. Revisá las Reglas de Storage.";
+                    if (response.status === 404) msg = "<strong>❓ Error 404 (No encontrado):</strong> El archivo no existe en Storage. ¿Sincronizaste desde el Portal?";
+                    resDiv.innerHTML = `<div class="error">${msg} (Status: ${response.status})</div>`;
+                }
+            } catch (err) {
+                console.error(err);
+                resDiv.innerHTML = `
+                    <div class="error">
+                        <strong>❌ ERROR DE RED / CORS:</strong> No se pudo completar la petición.<br><br>
+                        Posibles causas:<br>
+                        1. <strong>CORS:</strong> El bucket de Firebase no tiene configurado CORS (común en localhost).<br>
+                        2. <strong>Red:</strong> No hay conexión a internet.<br><br>
+                        Revisá la Consola (F12) para ver el error exacto.
+                    </div>
+                `;
+            }
+        };
+    </script>
+</body>
+</html>

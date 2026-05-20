@@ -1,6 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, getDocs, addDoc, serverTimestamp, setDoc, doc, query, where, Timestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, doc, getDoc, collection, getDocs, query, addDoc, setDoc, serverTimestamp, where } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
+// Config Firebase — inline en cada archivo, NO importar desde firebase-config.js
 const firebaseConfig = {
   apiKey: "AIzaSyDSjlHVAIWy8LiPaoD31biyTQ3W_UdL5us",
   authDomain: "lacteos-elmilagro.firebaseapp.com",
@@ -9,187 +10,263 @@ const firebaseConfig = {
   messagingSenderId: "1048870846106",
   appId: "1:1048870846106:web:4b0071677f22f80b12a923"
 };
+
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// Estado de la app
-let products = [];
-let categories = [];
-let cart = JSON.parse(localStorage.getItem('cart')) || [];
-let currentCategory = 'all';
-let searchQuery = '';
-
+// ZONAS Y SUCURSALES — HARDCODEADAS, NO CAMBIAR
 const ZONAS = [
-  { zona: 'Zona Norte', sucursal: 'Sucursal Bolivia' },
-  { zona: 'Zona Sur', sucursal: 'Sucursal Chile' },
-  { zona: 'Zona Este', sucursal: 'Sucursal Artigas' },
-  { zona: 'Zona Centro', sucursal: 'Sucursal Arenales' },
-  { zona: 'Zona Oeste', sucursal: 'Sucursal Arenales' },
-  { zona: 'Orán', sucursal: 'Sucursal Orán' },
+  { zona: 'Zona Norte',  barrios: ['Bolivia', 'Tres Cerritos'], sucursal: 'Sucursal Bolivia' },
+  { zona: 'Zona Sur',    barrios: ['Chile', 'Inter'],           sucursal: 'Sucursal Chile' },
+  { zona: 'Zona Este',   barrios: ['Artigas'],                  sucursal: 'Sucursal Artigas' },
+  { zona: 'Zona Centro', barrios: ['Arenales', 'Mendoza'],      sucursal: 'Sucursal Arenales' },
+  { zona: 'Zona Oeste',  barrios: ['Arenales', 'Mendoza'],      sucursal: 'Sucursal Arenales' },
+  { zona: 'Orán',        barrios: ['Todo Orán'],                sucursal: 'Sucursal Orán' },
 ];
+
+/**
+ * IMPORTANTE: Si los productos no cargan (Error de Red/CORS), 
+ * debés configurar CORS en tu bucket de Firebase Storage usando gsutil.
+ */
+const STORAGE_BASE_URL = 'https://firebasestorage.googleapis.com/v0/b/lacteos-elmilagro.firebasestorage.app/o/catalog%2F';
+
+let products = [];           
+let allCategories = [];      
+let currentCategory = 'all'; 
+let searchQuery = '';        
+let cart = JSON.parse(localStorage.getItem('cart') || '[]');
+let serverVersions = {};     
 
 // Elementos DOM
 const productContainer = document.getElementById('productContainer');
 const featuredContainer = document.getElementById('featuredContainer');
 const featuredSection = document.getElementById('featuredSection');
 const categoryContainer = document.getElementById('categoryContainer');
-const productsTitle = document.getElementById('productsTitle');
-
 const cartBadge = document.getElementById('cartBadge');
 const cartSidebar = document.getElementById('cartSidebar');
-const cartToggleBtn = document.getElementById('cartToggleBtn');
-const closeCartBtn = document.getElementById('closeCartBtn');
 const cartItemsContainer = document.getElementById('cartItemsContainer');
 const cartTotalText = document.getElementById('cartTotalText');
 const checkoutBtn = document.getElementById('checkoutBtn');
-
 const productModal = document.getElementById('productModal');
-const productModalOverlay = document.getElementById('productModalOverlay');
-const modalCloseBtn = document.getElementById('modalCloseBtn');
-const modalImg = document.getElementById('modalImg');
-const modalCategory = document.getElementById('modalCategory');
-const modalTitle = document.getElementById('modalTitle');
-const modalDesc = document.getElementById('modalDesc');
-const modalPrice = document.getElementById('modalPrice');
-const modalAddToCartBtn = document.getElementById('modalAddToCartBtn');
-
-const cartOverlay = document.getElementById('cartOverlay');
-
-// DOM Elements: Checkout
 const checkoutModal = document.getElementById('checkoutModal');
-const checkoutModalOverlay = document.getElementById('checkoutModalOverlay');
-const checkoutModalCloseBtn = document.getElementById('checkoutModalCloseBtn');
-const checkoutForm = document.getElementById('checkoutForm');
-const checkoutPhone = document.getElementById('checkoutPhone');
-const checkoutZone = document.getElementById('checkoutZone');
-const checkoutCP = document.getElementById('checkoutCP');
-const checkoutAddress = document.getElementById('checkoutAddress');
-
 const toastMessage = document.getElementById('toastMessage');
 
-// Inicializacion
-document.addEventListener('DOMContentLoaded', async () => {
+// --- INICIO APP ---
+async function initApp() {
+  cleanCorruptedCache();
   initTheme();
-  initCartListeners();
-  updateCartUI();
-  const searchInput = document.getElementById('searchInput');
-  if(searchInput) {
-    searchInput.addEventListener('input', e => {
-      searchQuery = e.target.value.toLowerCase();
-      renderProducts();
-    });
-  }
+  renderCart();
+  setupEventListeners();
+  await loadCatalogMeta();    // 1 sola lectura Firestore
+  await loadCategories();     // Cargar categorías (orden local)
+  await loadCategoryProducts('all'); // Cargar catálogo desde Storage
+}
 
+function cleanCorruptedCache() {
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('cache_')) {
+      const val = localStorage.getItem(key);
+      if (!val || val === '' || val === 'undefined') {
+        localStorage.removeItem(key);
+      }
+    }
+  }
+}
+
+document.addEventListener('DOMContentLoaded', initApp);
+
+// 1. Lectura Meta
+async function loadCatalogMeta() {
   try {
-    await fetchCategories();
-    await fetchProducts();
+    const metaDoc = await getDoc(doc(db, 'meta', 'catalog'));
+    if (metaDoc.exists()) {
+      serverVersions = metaDoc.data().versions || {};
+    }
+  } catch (e) {
+    console.warn('Usando caché local por falla en meta doc');
+  }
+}
+
+// 2. Carga de Categorías (Orden local, sin orderBy en Firestore)
+async function loadCategories() {
+  try {
+    const snap = await getDocs(collection(db, 'categories'));
+    allCategories = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    allCategories.sort((a, b) => (a.order || 0) - (b.order || 0));
     renderCategories();
-    renderProducts();
-    renderFeaturedProducts();
-  } catch (error) {
-    console.error("Error cargando datos:", error);
-    productContainer.innerHTML = '<p style="padding: 2rem; color: var(--danger-color);">Error conectando con la base de datos. Verifica la configuración de Firebase.</p>';
+  } catch(e) {
+    console.error('Error loadCategories:', e);
   }
-});
-
-// Temas
-function initTheme() {
-  let savedTheme = localStorage.getItem('theme');
-  if(!savedTheme) {
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      savedTheme = 'dark';
-    } else {
-      savedTheme = 'light';
-    }
-  }
-  
-  document.body.setAttribute('data-theme', savedTheme);
-  
-  const themeBtns = document.querySelectorAll('.theme-btn');
-  themeBtns.forEach(btn => {
-    if(btn.dataset.themeBtn === savedTheme) {
-      btn.classList.add('active');
-    }
-    
-    btn.addEventListener('click', () => {
-      themeBtns.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const theme = btn.dataset.themeBtn;
-      document.body.setAttribute('data-theme', theme);
-      localStorage.setItem('theme', theme);
-    });
-  });
 }
 
-// Data fetching
-async function fetchCategories() {
-  const querySnapshot = await getDocs(collection(db, "categories"));
-  categories = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-  categories.sort((a, b) => (a.order || 0) - (b.order || 0));
-}
-
-async function fetchProducts() {
-  const querySnapshot = await getDocs(collection(db, "products"));
-  products = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-}
-
-// Render UI
 function renderCategories() {
   categoryContainer.innerHTML = '';
-  
   const allBtn = document.createElement('button');
   allBtn.className = `category-pill ${currentCategory === 'all' ? 'active' : ''}`;
   allBtn.innerHTML = '🛒 Todas';
-  allBtn.addEventListener('click', () => filterByCategory('all'));
+  allBtn.onclick = () => selectCategory('all');
   categoryContainer.appendChild(allBtn);
 
-  categories.forEach(cat => {
+  allCategories.forEach(cat => {
     const btn = document.createElement('button');
     btn.className = `category-pill ${currentCategory === cat.name ? 'active' : ''}`;
     btn.innerHTML = `${cat.icon || ''} ${cat.name}`;
-    btn.addEventListener('click', () => filterByCategory(cat.name));
+    btn.onclick = () => selectCategory(cat.name);
     categoryContainer.appendChild(btn);
   });
 }
 
-function filterByCategory(categoryName) {
-  currentCategory = categoryName;
+function selectCategory(name) {
+  currentCategory = name;
   renderCategories();
+  loadCategoryProducts(name);
+}
+
+// 3. Carga desde Storage
+async function loadCategoryProducts(categoryName) {
+  productContainer.innerHTML = '<div class="loading-spinner" style="padding: 2rem; text-align: center; width: 100%; grid-column: 1/-1;">Cargando catálogo...</div>';
+
+  if (categoryName === 'all') {
+    // 4. Carga Paralela
+    const results = await Promise.all(allCategories.map(cat => getProductsForCategory(cat.name)));
+    products = results.flat();
+  } else {
+    products = await getProductsForCategory(categoryName);
+  }
+  
   renderProducts();
+  loadFeatured();
+}
+
+async function getProductsForCategory(categoryName) {
+  const cacheKey = `cache_${categoryName}`;
+  const versionKey = `v_${categoryName}`;
+  const localVersion = parseInt(localStorage.getItem(versionKey) || '0');
+  const serverVersion = parseInt(serverVersions[categoryName] || '0');
+  
+  // 1. Check Cache
+  if (localVersion > 0 && localVersion >= serverVersion) {
+    try {
+      const cachedData = localStorage.getItem(cacheKey);
+      if (cachedData) return JSON.parse(cachedData);
+    } catch(e) {
+      console.warn(`Caché corrupto para ${categoryName}, forzando redescarga.`);
+      localStorage.removeItem(cacheKey); 
+    }
+  }
+  
+  // 2. Safe Fetch from Storage
+  try {
+    const url = `${STORAGE_BASE_URL}${encodeURIComponent(categoryName)}.json?alt=media`;
+    console.warn(`[DEBUG-FETCH] 1. Intentando descargar URL:`, url);
+    
+    const response = await fetch(url);
+    console.warn(`[DEBUG-FETCH] 2. Respuesta HTTP Status:`, response.status, response.ok);
+    
+    if (!response.ok) {
+      if (response.status === 404) {
+          console.error(`[DEBUG-FETCH] 3. Error 404: El archivo de ${categoryName} no existe en Storage.`);
+          return [];
+      }
+      throw new Error(`HTTP Error: ${response.status}`);
+    }
+
+    const textData = await response.text(); 
+    console.warn(`[DEBUG-FETCH] 4. Longitud del texto recibido:`, textData ? textData.length : 0);
+    console.warn(`[DEBUG-FETCH] 5. Primeros 50 caracteres:`, textData ? textData.substring(0, 50) : "VACÍO");
+
+    if (!textData || textData.trim() === '') {
+       console.error(`[DEBUG-FETCH] 6. Storage devolvió un archivo vacío para ${categoryName}`);
+       return [];
+    }
+    
+    const parsedData = JSON.parse(textData);
+    console.warn(`[DEBUG-FETCH] 7. JSON parseado con éxito. Productos encontrados:`, parsedData.products ? parsedData.products.length : 0);
+    
+    const productsList = parsedData.products || [];
+    
+    // 4. Update Cache
+    localStorage.setItem(cacheKey, JSON.stringify(productsList));
+    localStorage.setItem(versionKey, String(serverVersion || 1));
+    
+    return productsList;
+    
+  } catch(e) {
+    console.error(`Fallo crítico cargando ${categoryName}:`, e);
+    return []; // Devolver array vacío para no romper la UI
+  }
+}
+
+// 5. Renderizado Combinado
+function renderProducts() {
+  productContainer.innerHTML = '';
+  let filtered = [...products];
+  
+  if (currentCategory !== 'all') {
+    filtered = filtered.filter(p => p.category === currentCategory);
+  }
+  
+  if (searchQuery.trim()) {
+    const q = searchQuery.toLowerCase();
+    filtered = filtered.filter(p =>
+      p.name.toLowerCase().includes(q) ||
+      (p.description || '').toLowerCase().includes(q)
+    );
+  }
+  
+  filtered = filtered.filter(p => p.stock === undefined || p.stock > 0);
+  
+  if (filtered.length === 0) {
+    productContainer.innerHTML = '<p class="empty-msg" style="padding: 2rem; grid-column: 1/-1; text-align: center;">No se encontraron productos.</p>';
+    return;
+  }
+  
+  filtered.forEach(product => {
+    productContainer.appendChild(createProductCard(product));
+  });
+}
+
+function loadFeatured() {
+  const featured = products.filter(p => p.featured);
+  if (featured.length === 0) {
+    featuredSection.style.display = 'none';
+    return;
+  }
+  featuredSection.style.display = 'block';
+  featuredContainer.innerHTML = '';
+  featured.forEach(product => {
+    featuredContainer.appendChild(createProductCard(product));
+  });
 }
 
 function createProductCard(product) {
   const card = document.createElement('div');
   card.className = 'product-card';
   
-  // Lógica de Ofertas
-  let isOfferActive = false;
   let currentPrice = Number(product.price);
-  if (product.offerPrice && product.offerExpires) {
-    // El expire llega de "YYYY-MM-DD", pero hay que crear Date local.
-    // Para simplificar:
-    if (new Date(product.offerExpires + 'T23:59:59') >= new Date()) {
-      currentPrice = Number(product.offerPrice);
-      isOfferActive = true;
-    }
+  let isOffer = false;
+  if (product.offerPrice && product.offerExpires && new Date(product.offerExpires + 'T23:59:59') >= new Date()) {
+    currentPrice = Number(product.offerPrice);
+    isOffer = true;
   }
 
   card.innerHTML = `
     <div class="product-img-wrapper" style="cursor:pointer;" onclick="openProductModal('${product.id}')">
       ${product.featured ? '<span class="badge-featured">Destacado</span>' : ''}
-      ${isOfferActive ? '<span class="badge-featured badge-offer">OFERTA</span>' : ''}
-      <img src="${product.imageURL || 'https://via.placeholder.com/400x300'}" alt="${product.name}" class="product-img" onerror="this.src='https://via.placeholder.com/400x300'">
+      ${isOffer ? '<span class="badge-featured badge-offer">OFERTA</span>' : ''}
+      <img src="${product.imageURL || 'logo.png'}" alt="${product.name}" class="product-img" onerror="this.src='logo.png'">
     </div>
     <div class="product-info">
       <span class="product-category">${product.category}</span>
       <h3 class="product-name" style="cursor:pointer;" onclick="openProductModal('${product.id}')">${product.name}</h3>
       <div style="display:flex; flex-direction:column; gap:0.5rem; margin-top:auto;">
         <div style="display:flex; flex-direction:column;">
-          ${isOfferActive ? `<span style="text-decoration: line-through; color: var(--text-secondary); font-size: 0.9rem; line-height:1;">$${Number(product.price).toFixed(2)}</span>` : '<span style="height: 0.9rem; display:block;"></span>'}
+          ${isOffer ? `<span style="text-decoration: line-through; color: var(--text-secondary); font-size: 0.9rem; line-height:1;">$${Number(product.price).toFixed(2)}</span>` : '<span style="height: 0.9rem; display:block;"></span>'}
           <span class="product-price">$${currentPrice.toFixed(2)}</span>
         </div>
         <button class="btn-add" onclick="addToCart('${product.id}')" ${product.stock <= 0 ? 'disabled' : ''}>
-          ${product.stock > 0 ? '+ AGREGAR 🛒' : 'Agotado'}
+          ${product.stock === undefined || product.stock > 0 ? '+ AGREGAR 🛒' : 'Agotado'}
         </button>
       </div>
     </div>
@@ -197,451 +274,130 @@ function createProductCard(product) {
   return card;
 }
 
-function renderProducts() {
-  productContainer.innerHTML = '';
-  
-  let filtered = products;
-  if(currentCategory !== 'all') {
-    filtered = products.filter(p => p.category === currentCategory);
+// Modales, Carrito y Tracking
+function setupEventListeners() {
+  const searchInput = document.getElementById('searchInput');
+  if (searchInput) {
+    searchInput.addEventListener('input', e => {
+      searchQuery = e.target.value.toLowerCase();
+      renderProducts();
+    });
   }
 
-  if(searchQuery) {
-    filtered = filtered.filter(p => 
-      (p.name && p.name.toLowerCase().includes(searchQuery)) || 
-      (p.description && p.description.toLowerCase().includes(searchQuery))
-    );
-  }
-
-  if(filtered.length === 0) {
-    productContainer.innerHTML = '<p style="padding: 2rem;">No se encontraron productos.</p>';
-    return;
-  }
-
-  filtered.forEach(product => {
-    productContainer.appendChild(createProductCard(product));
+  document.getElementById('cartToggleBtn')?.addEventListener('click', () => {
+    document.getElementById('cartSidebar').classList.add('open');
+    document.getElementById('cartOverlay').classList.add('open');
   });
+
+  document.getElementById('closeCartBtn')?.addEventListener('click', closeCart);
+  document.getElementById('cartOverlay')?.addEventListener('click', closeCart);
+  
+  document.getElementById('checkoutBtn')?.addEventListener('click', openCheckout);
+  document.getElementById('checkoutModalCloseBtn')?.addEventListener('click', closeCheckout);
+  document.getElementById('checkoutModalOverlay')?.addEventListener('click', closeCheckout);
+  
+  document.getElementById('checkoutForm')?.addEventListener('submit', submitCheckout);
+  
+  document.getElementById('modalCloseBtn')?.addEventListener('click', closeProductModal);
+  document.getElementById('productModalOverlay')?.addEventListener('click', closeProductModal);
+
+  document.getElementById('btnTrackOrder')?.addEventListener('click', openTrackingModal);
+  document.getElementById('trackingModalCloseBtn')?.addEventListener('click', closeTrackingModal);
+  document.getElementById('trackingModalOverlay')?.addEventListener('click', closeTrackingModal);
+  document.getElementById('btnSearchTracking')?.addEventListener('click', searchTracking);
+
+  document.getElementById('ticketModalCloseBtn')?.addEventListener('click', closeTicketModal);
+  document.getElementById('ticketModalOverlay')?.addEventListener('click', closeTicketModal);
 }
 
-function renderFeaturedProducts() {
-  const featured = products.filter(p => p.featured);
-  
-  if(featured.length === 0) {
-    featuredSection.style.display = 'none';
-    return;
-  }
-
-  featuredSection.style.display = 'block';
-  featuredContainer.innerHTML = '';
-  
-  featured.forEach(product => {
-    featuredContainer.appendChild(createProductCard(product));
-  });
+function closeCart() {
+  document.getElementById('cartSidebar').classList.remove('open');
+  document.getElementById('cartOverlay').classList.remove('open');
 }
 
-// Modal Logic
 window.openProductModal = function(id) {
   const product = products.find(p => p.id === id);
   if(!product) return;
-
-  modalImg.src = product.imageURL || 'https://via.placeholder.com/800x600';
-  modalCategory.textContent = product.category;
-  modalTitle.textContent = product.name;
-  modalDesc.textContent = product.description || '';
+  document.getElementById('modalImg').src = product.imageURL || 'https://via.placeholder.com/800x600';
+  document.getElementById('modalCategory').textContent = product.category;
+  document.getElementById('modalTitle').textContent = product.name;
+  document.getElementById('modalDesc').textContent = product.description || '';
   
   let currentPrice = Number(product.price);
   if (product.offerPrice && product.offerExpires && new Date(product.offerExpires + 'T23:59:59') >= new Date()) {
     currentPrice = Number(product.offerPrice);
-    modalPrice.innerHTML = `<span style="text-decoration:line-through; font-size:1.2rem; color:var(--text-secondary); margin-right: 0.5rem;">$${Number(product.price).toFixed(2)}</span>$${currentPrice.toFixed(2)}`;
+    document.getElementById('modalPrice').innerHTML = `<span style="text-decoration:line-through; font-size:1.2rem; color:var(--text-secondary); margin-right: 0.5rem;">$${Number(product.price).toFixed(2)}</span>$${currentPrice.toFixed(2)}`;
   } else {
-    modalPrice.textContent = `$${currentPrice.toFixed(2)}`;
+    document.getElementById('modalPrice').textContent = `$${currentPrice.toFixed(2)}`;
   }
   
-  modalAddToCartBtn.onclick = () => {
+  document.getElementById('modalAddToCartBtn').onclick = () => {
     addToCart(product.id, 1);
     closeProductModal();
   };
-
-  if(product.stock <= 0) {
-    modalAddToCartBtn.disabled = true;
-    modalAddToCartBtn.textContent = 'Agotado';
-  } else {
-    modalAddToCartBtn.disabled = false;
-    modalAddToCartBtn.textContent = '+ AGREGAR 🛒';
-  }
-
   productModal.classList.add('open');
-  productModalOverlay.classList.add('open');
-  document.body.style.overflow = 'hidden';
+  document.getElementById('productModalOverlay').classList.add('open');
 }
 
 function closeProductModal() {
   productModal.classList.remove('open');
-  productModalOverlay.classList.remove('open');
-  document.body.style.overflow = '';
-}
-
-modalCloseBtn.addEventListener('click', closeProductModal);
-productModalOverlay.addEventListener('click', closeProductModal);
-
-// Cart Logic
-function initCartListeners() {
-  cartToggleBtn.addEventListener('click', () => {
-    cartSidebar.classList.add('open');
-    cartOverlay.classList.add('open');
-  });
-
-  if(cartOverlay) {
-    cartOverlay.addEventListener('click', closeCart);
-  }
-
-  closeCartBtn.addEventListener('click', closeCart);
-  
-  // En lugar de enviar directo a WA, abrimos el checkout
-  checkoutBtn.addEventListener('click', () => {
-    if(cart.length === 0) return;
-    closeCart(); // Cerramos carrito
-    
-    const checkoutZone = document.getElementById('checkoutZone');
-    if(checkoutZone.options.length <= 1) {
-      ZONAS.forEach(z => {
-        const opt = document.createElement('option');
-        opt.value = z.zona; opt.textContent = z.zona;
-        checkoutZone.appendChild(opt);
-      });
-    }
-
-    const savedCustomer = JSON.parse(localStorage.getItem('customer_data'));
-    if (savedCustomer) {
-      document.getElementById('checkoutName').value = savedCustomer.name || '';
-      document.getElementById('checkoutDNI').value = savedCustomer.dni || '';
-      document.getElementById('checkoutPhone').value = savedCustomer.phone || '';
-      document.getElementById('checkoutZone').value = savedCustomer.zone || '';
-      document.getElementById('checkoutAddress').value = savedCustomer.address || '';
-      document.getElementById('checkoutCP').value = savedCustomer.cp || '';
-    }
-
-    checkoutModal.classList.add('open');
-    checkoutModalOverlay.classList.add('open');
-  });
-
-  checkoutModalCloseBtn.addEventListener('click', closeCheckout);
-  checkoutModalOverlay.addEventListener('click', closeCheckout);
-
-  checkoutForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    // Obtener datos del form
-    const customerName = document.getElementById('checkoutName').value.trim();
-    const dniRaw = document.getElementById('checkoutDNI').value.trim();
-    const dni = dniRaw.replace(/\D/g, ''); // Normalizar DNI: solo números
-    const phone = checkoutPhone.value.trim();
-    const zone = checkoutZone.value;
-    const cp = checkoutCP.value.trim();
-    const address = checkoutAddress.value.trim();
-    const paymentMethod = document.getElementById('checkoutPayment').value;
-    
-    const zonaSeleccionada = ZONAS.find(z => z.zona === zone);
-    const branchAsignada = zonaSeleccionada ? zonaSeleccionada.sucursal : 'Genérica';
-
-    // Preparar el mensaje para WhatsApp
-    let msj = "¡Hola! Quiero hacer un pedido.\\n\\n";
-    msj += "*Mis Datos de Envío:*\\n";
-    msj += `- Nombre: ${customerName}\\n`;
-    msj += `- DNI: ${dni}\\n`;
-    msj += `- Teléfono: ${phone}\\n`;
-    msj += `- Zona: ${zone}\\n`;
-    msj += `- Dirección: ${address}\\n`;
-    msj += `- C.P.: ${cp}\\n`;
-    msj += `- Método de pago: ${paymentMethod}\\n\\n`;
-
-    msj += "*Mi Pedido:*\\n";
-    let total = 0;
-    cart.forEach(item => {
-      msj += `${item.quantity}x ${item.name} - $${(item.price * item.quantity).toFixed(2)}\\n`;
-      total += item.price * item.quantity;
-    });
-    msj += `\\n*Total: $${total.toFixed(2)}*`;
-
-    // 1. Guardar en Firestore y Local Storage
-    try {
-      checkoutForm.querySelector('button[type="submit"]').textContent = "Procesando...";
-      checkoutForm.querySelector('button[type="submit"]').disabled = true;
-      
-      localStorage.setItem('customer_data', JSON.stringify({
-        name: customerName, dni, phone, zone, address, cp
-      }));
-      
-      const dniId = dni.replace(/\D/g,'');
-      if (dniId) {
-        await setDoc(doc(db, "customers", dniId), {
-          name: customerName, dni, phone, zone, address, cp,
-          lastOrder: serverTimestamp()
-        }, { merge: true });
-      }
-
-      const orderData = {
-        customer: { name: customerName, dni, phone, zone, cp, address },
-        items: cart,
-        total: total,
-        status: "pending",
-        isPaid: false,
-        paymentMethod: paymentMethod,
-        branch: branchAsignada,
-        createdAt: serverTimestamp()
-      };
-      
-      // Guardar en coleccion orders
-      await addDoc(collection(db, "orders"), orderData);
-      
-    } catch(err) {
-      console.error("Error guardando orden:", err);
-      // Opcional: Podrías detener el envío a WA, pero si Firebase falla, capaz a WA llega igual y no pierden la venta
-    }
-
-    // 2. Abre WhatsApp con el mensaje
-    // TODO: reemplazar con número de WhatsApp real de El Milagro
-    const WA_NUMBER = '549XXXXXXXXXX';
-    window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msj)}`, '_blank');
-    
-    showToast("Redirigiendo a WhatsApp...");
-    closeCheckout();
-    
-    // Limpiar el estado visual
-    checkoutForm.querySelector('button[type="submit"]').textContent = "Confirmar y Pedir por WhatsApp";
-    checkoutForm.querySelector('button[type="submit"]').disabled = false;
-    
-    // Vaciar carrito
-    cart = [];
-    saveCart();
-    updateCartUI();
-  });
-
-  document.getElementById('btnTrackOrder').addEventListener('click', () => {
-    document.getElementById('trackingModalOverlay').classList.add('open');
-    document.getElementById('trackingModal').classList.add('open');
-    
-    const savedCustomer = JSON.parse(localStorage.getItem('customer_data'));
-    if(savedCustomer && savedCustomer.dni) {
-      document.getElementById('trackingDNI').value = savedCustomer.dni;
-    }
-  });
-
-  document.getElementById('trackingModalCloseBtn').addEventListener('click', () => {
-    document.getElementById('trackingModalOverlay').classList.remove('open');
-    document.getElementById('trackingModal').classList.remove('open');
-  });
-
-  document.getElementById('btnSearchTracking').addEventListener('click', async () => {
-    const dniIngresado = document.getElementById('trackingDNI').value.trim().replace(/\D/g, '');
-    if(!dniIngresado) return;
-    
-    const btn = document.getElementById('btnSearchTracking');
-    btn.textContent = 'Buscando...';
-    btn.disabled = true;
-
-    const resDiv = document.getElementById('trackingResult');
-    const errDiv = document.getElementById('trackingError');
-    resDiv.style.display = 'none';
-    errDiv.style.display = 'none';
-
-    try {
-      // Búsqueda sin orderBy para evitar requerir índice compuesto en Firestore
-      const q = query(
-        collection(db, "orders"),
-        where("customer.dni", "==", dniIngresado)
-      );
-      const snap = await getDocs(q);
-      
-      if(snap.empty) {
-        errDiv.style.display = 'block';
-      } else {
-        // Ordenar localmente por fecha descendente y mostrar los últimos 3
-        const orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        orders.sort((a, b) => {
-          const ta = a.createdAt ? (a.createdAt.toMillis ? a.createdAt.toMillis() : 0) : 0;
-          const tb = b.createdAt ? (b.createdAt.toMillis ? b.createdAt.toMillis() : 0) : 0;
-          return tb - ta;
-        });
-        const toShow = orders.slice(0, 3);
-
-        resDiv.innerHTML = '';
-        toShow.forEach(order => {
-          const orderId = order.id;
-          
-          const stepsOrder = ['no_autorizado', 'pagado', 'pending', 'preparando', 'en_camino', 'entregado'];
-          let currentIdx = stepsOrder.indexOf(order.status) > -1 ? stepsOrder.indexOf(order.status) : 1;
-          
-          // Especial: si el estado es 'retirar_en_sucursal', lo tratamos como 'en_camino' a nivel visual de barra,
-          // pero mostramos la alerta de retiro.
-          const isWithdrawal = order.status === 'retirar_en_sucursal';
-          if(isWithdrawal) currentIdx = 4; // Queda en 'en_camino' pero con alerta
-          
-          const progressPercent = (currentIdx / (stepsOrder.length - 1)) * 100;
-          
-          let carrierIcon = '📦';
-          if(order.status === 'en_camino' || isWithdrawal) carrierIcon = '🛵';
-          if(order.status === 'entregado') carrierIcon = '🚚';
-          if(order.status === 'preparando') carrierIcon = '👨‍🍳';
-
-          let fechaStr = '';
-          if(order.createdAt && order.createdAt.toDate) {
-            fechaStr = order.createdAt.toDate().toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
-          }
-
-          const container = document.createElement('div');
-          container.className = 'tracking-container';
-          container.innerHTML = `
-            ${isWithdrawal ? '<div class="withdrawal-alert">Retirar en la sucursal</div>' : ''}
-            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
-              <h3 style="color: var(--primary-color); margin: 0;">Pedido #${orderId.slice(-5)}</h3>
-              <span style="font-size: 0.8rem; background: var(--amarillo); color: var(--verde); padding: 2px 8px; border-radius: 4px; font-weight: bold;">${order.status.toUpperCase()}</span>
-            </div>
-            <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Total: $${Number(order.total).toFixed(2)}</p>
-            ${fechaStr ? `<p style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 2rem;">📅 ${fechaStr}</p>` : '<div style="margin-bottom:2rem"></div>'}
-            
-            <div class="tracking-bar">
-              <div class="tracking-progress-fill" style="width: ${progressPercent}%">
-                <div class="tracking-icon-carrier">${carrierIcon}</div>
-              </div>
-              
-              <div class="tracking-step ${currentIdx >= 0 ? (currentIdx == 0 ? 'active' : 'done') : ''}" data-step="no_autorizado">
-                <div class="step-dot"></div>
-                <div class="step-label">No Autorizado</div>
-              </div>
-              <div class="tracking-step ${currentIdx >= 1 ? (currentIdx == 1 ? 'active' : 'done') : ''}" data-step="pagado">
-                <div class="step-dot"></div>
-                <div class="step-label">Pagado</div>
-              </div>
-              <div class="tracking-step ${currentIdx >= 2 ? (currentIdx == 2 ? 'active' : 'done') : ''}" data-step="pending">
-                <div class="step-dot"></div>
-                <div class="step-label">Pendiente</div>
-              </div>
-              <div class="tracking-step ${currentIdx >= 3 ? (currentIdx == 3 ? 'active' : 'done') : ''}" data-step="preparando">
-                <div class="step-dot"></div>
-                <div class="step-label">Preparando</div>
-              </div>
-              <div class="tracking-step ${currentIdx >= 4 ? (currentIdx == 4 ? 'active' : 'done') : ''}" data-step="en_camino">
-                <div class="step-dot"></div>
-                <div class="step-label">En camino</div>
-              </div>
-              <div class="tracking-step ${currentIdx >= 5 ? (currentIdx == 5 ? 'active' : 'done') : ''}" data-step="entregado">
-                <div class="step-dot"></div>
-                <div class="step-label">Entregado</div>
-              </div>
-            </div>
-            ${isWithdrawal ? `<button class="btn-track-premium" onclick="window.openTicketModal('${orderId}', '${order.customer?.dni}')">MÍ TICKET</button>` : ''}
-          `;
-          resDiv.appendChild(container);
-        });
-        
-        resDiv.style.display = 'block';
-      }
-    } catch(e) {
-      console.error('Error tracking:', e);
-      errDiv.textContent = 'Error al buscar pedidos. Intentá de nuevo.';
-      errDiv.style.display = 'block';
-    }
-    btn.textContent = 'Buscar';
-    btn.disabled = false;
-  });
-}
-
-
-function closeCart() {
-  cartSidebar.classList.remove('open');
-  if(cartOverlay) cartOverlay.classList.remove('open');
-}
-
-function closeCheckout() {
-  checkoutModal.classList.remove('open');
-  checkoutModalOverlay.classList.remove('open');
+  document.getElementById('productModalOverlay').classList.remove('open');
 }
 
 window.addToCart = function(productId, quantity = 1) {
   const product = products.find(p => p.id === productId);
   if(!product) return;
-
   const existingItem = cart.find(item => item.id === productId);
-  
   let currentPrice = Number(product.price);
   if (product.offerPrice && product.offerExpires && new Date(product.offerExpires + 'T23:59:59') >= new Date()) {
     currentPrice = Number(product.offerPrice);
   }
-
   if(existingItem) {
-    existingItem.quantity += quantity;
-    existingItem.price = currentPrice; // en caso de q haya cambiado
+    existingItem.qty += quantity;
+    existingItem.price = currentPrice;
   } else {
-    cart.push({
-      id: product.id,
-      name: product.name,
-      price: currentPrice,
-      imageURL: product.imageURL,
-      quantity: quantity
-    });
+    cart.push({ id: product.id, name: product.name, price: currentPrice, imageURL: product.imageURL, qty: quantity });
   }
-
-  saveCart();
-  updateCartUI();
-  showToast(`${product.name} agregado al carrito!`, 'success');
-  
-  // Animar el icono
-  cartToggleBtn.style.transform = 'scale(1.2)';
-  setTimeout(() => cartToggleBtn.style.transform = '', 200);
+  saveCart(); renderCart(); showToast(`${product.name} agregado!`);
 }
 
 window.updateQuantity = function(productId, delta) {
   const item = cart.find(i => i.id === productId);
   if(!item) return;
-
-  item.quantity += delta;
-  if(item.quantity <= 0) {
-    removeFromCart(productId);
-  } else {
-    saveCart();
-    updateCartUI();
-  }
+  item.qty += delta;
+  if(item.qty <= 0) cart = cart.filter(i => i.id !== productId);
+  saveCart(); renderCart();
 }
 
 window.removeFromCart = function(productId) {
   cart = cart.filter(i => i.id !== productId);
-  saveCart();
-  updateCartUI();
+  saveCart(); renderCart();
 }
 
-function saveCart() {
-  localStorage.setItem('cart', JSON.stringify(cart));
-}
+function saveCart() { localStorage.setItem('cart', JSON.stringify(cart)); }
 
-function updateCartUI() {
-  // Update badge
-  const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
+function renderCart() {
+  const totalItems = cart.reduce((sum, item) => sum + item.qty, 0);
   cartBadge.textContent = totalItems;
-
   if(cart.length === 0) {
     cartItemsContainer.innerHTML = '<div style="text-align:center;color:var(--text-secondary);margin-top:2rem;">El carrito está vacío</div>';
-    cartTotalText.textContent = '$0.00';
-    checkoutBtn.disabled = true;
-    return;
+    cartTotalText.textContent = '$0.00'; checkoutBtn.disabled = true; return;
   }
-
   checkoutBtn.disabled = false;
   cartItemsContainer.innerHTML = '';
   let total = 0;
-
   cart.forEach(item => {
-    total += item.price * item.quantity;
-    
+    total += item.price * item.qty;
     const div = document.createElement('div');
     div.className = 'cart-item';
     div.innerHTML = `
-      <img src="${item.imageURL || 'https://via.placeholder.com/150'}" alt="${item.name}" class="cart-item-img" onerror="this.src='https://via.placeholder.com/150'">
+      <img src="${item.imageURL || 'logo.png'}" class="cart-item-img" onerror="this.src='logo.png'">
       <div class="cart-item-info">
         <div class="cart-item-name">${item.name}</div>
         <div class="cart-item-price">$${Number(item.price).toFixed(2)}</div>
         <div class="cart-controls">
           <button class="qty-btn" onclick="updateQuantity('${item.id}', -1)">-</button>
-          <span class="cart-item-qty">${item.quantity}</span>
+          <span class="cart-item-qty">${item.qty}</span>
           <button class="qty-btn" onclick="updateQuantity('${item.id}', 1)">+</button>
           <button class="remove-item" onclick="removeFromCart('${item.id}')">🗑️</button>
         </div>
@@ -649,33 +405,200 @@ function updateCartUI() {
     `;
     cartItemsContainer.appendChild(div);
   });
-
-  cartTotalText.textContent = `$${total.toFixed(2)}`;
+  cartTotalText.textContent = `$${total.toLocaleString('es-AR')}`;
 }
 
-// Utilidad Toast
-function showToast(message, type = 'success') {
-  toastMessage.textContent = message;
-  toastMessage.className = `toast show ${type}`;
-  
-  setTimeout(() => {
-    toastMessage.classList.remove('show');
-  }, 3000);
+// 6. Checkout con DNI/Phone Seguro
+function openCheckout() {
+  if (cart.length === 0) return;
+  closeCart();
+  const zoneSelect = document.getElementById('checkoutZone');
+  if (zoneSelect.options.length <= 1) {
+    ZONAS.forEach(z => {
+      const opt = document.createElement('option');
+      opt.value = z.zona; opt.textContent = z.zona;
+      zoneSelect.appendChild(opt);
+    });
+  }
+  const saved = JSON.parse(localStorage.getItem('customer_data') || '{}');
+  if (saved.name) document.getElementById('checkoutName').value = saved.name;
+  if (saved.dni) document.getElementById('checkoutDNI').value = saved.dni;
+  if (saved.phone) document.getElementById('checkoutPhone').value = saved.phone;
+  if (saved.address) document.getElementById('checkoutAddress').value = saved.address;
+  if (saved.cp) document.getElementById('checkoutCP').value = saved.cp;
+  if (saved.zone) {
+    document.getElementById('checkoutZone').value = saved.zone;
+  }
+  checkoutModal.classList.add('open');
+  document.getElementById('checkoutModalOverlay').classList.add('open');
 }
 
-// --- Lógica del Ticket de Retiro ---
-window.openTicketModal = function(orderId, dni) {
-  document.getElementById('ticketCode').textContent = '#' + orderId.slice(-5).toUpperCase();
-  document.getElementById('ticketDNI').textContent = dni || 'Sin registrar';
+function closeCheckout() {
+  checkoutModal.classList.remove('open');
+  document.getElementById('checkoutModalOverlay').classList.remove('open');
+}
+
+function updateNeighborhoodOptions(zoneName) {
+  // Función eliminada según requerimiento
+}
+
+async function submitCheckout(e) {
+  e.preventDefault();
+  const zone = document.getElementById('checkoutZone').value;
+  const zonaData = ZONAS.find(z => z.zona === zone);
+  const branchAsignada = zonaData ? zonaData.sucursal : 'Sin sucursal';
   
+  const customerData = {
+    name: document.getElementById('checkoutName').value,
+    dni: document.getElementById('checkoutDNI').value.replace(/\D/g, ''),
+    phone: document.getElementById('checkoutPhone').value,
+    address: document.getElementById('checkoutAddress').value,
+    cp: document.getElementById('checkoutCP').value,
+    zone
+  };
+  localStorage.setItem('customer_data', JSON.stringify(customerData));
+  
+  try {
+    const phoneClean = customerData.phone.replace(/\D/g, '');
+    const customerId = customerData.dni || phoneClean || Date.now().toString();
+    
+    await setDoc(doc(db, 'customers', customerId), { ...customerData, lastOrder: serverTimestamp() }, { merge: true });
+    
+    const order = {
+      customer: customerData, items: cart,
+      total: cart.reduce((sum, item) => sum + item.price * item.qty, 0),
+      status: 'pending', isPaid: false, paymentMethod: document.getElementById('checkoutPayment').value,
+      branch: branchAsignada, createdAt: serverTimestamp()
+    };
+    const orderRef = await addDoc(collection(db, 'orders'), order);
+    
+    const WA_NUMBER = '5493874XXXXXX'; // TODO: Cambiar por el real
+    let msg = `🛒 *Nuevo pedido El Milagro*\nID: ${orderRef.id.slice(0,8)}\n👤 ${customerData.name}\n📍 ${customerData.address}, ${zone}\n🏪 Sucursal: ${branchAsignada}\n💰 *Total: $${order.total.toLocaleString('es-AR')}*`;
+    window.open(`https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(msg)}`, '_blank');
+    
+    cart = []; saveCart(); renderCart(); closeCheckout();
+    showToast('¡Pedido enviado! Revisá tu WhatsApp.');
+  } catch(e) {
+    showToast('Error al procesar el pedido.', 'error');
+  }
+}
+
+// Tracking y Temas
+function initTheme() {
+  let savedTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  document.body.setAttribute('data-theme', savedTheme);
+  const themeBtns = document.querySelectorAll('.theme-btn');
+  themeBtns.forEach(btn => {
+    if(btn.dataset.themeBtn === savedTheme) btn.classList.add('active');
+    btn.addEventListener('click', () => {
+      themeBtns.forEach(b => b.classList.remove('active')); btn.classList.add('active');
+      const t = btn.dataset.themeBtn; document.body.setAttribute('data-theme', t); localStorage.setItem('theme', t);
+    });
+  });
+}
+
+function openTrackingModal() {
+  document.getElementById('trackingModalOverlay').classList.add('open');
+  document.getElementById('trackingModal').classList.add('open');
+  const saved = JSON.parse(localStorage.getItem('customer_data') || '{}');
+  if (saved.dni) document.getElementById('trackingDNI').value = saved.dni;
+}
+
+function closeTrackingModal() {
+  document.getElementById('trackingModalOverlay').classList.remove('open');
+  document.getElementById('trackingModal').classList.remove('open');
+}
+
+async function searchTracking() {
+  const dni = document.getElementById('trackingDNI').value.replace(/\D/g, '');
+  if (!dni) return;
+  const btn = document.getElementById('btnSearchTracking'); btn.disabled = true;
+  try {
+    const q = query(collection(db, 'orders'), where('customer.dni', '==', dni));
+    const snap = await getDocs(q);
+    if (snap.empty) {
+      document.getElementById('trackingError').style.display = 'block';
+      document.getElementById('trackingResult').style.display = 'none';
+    } else {
+      const orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      orders.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+      renderTrackingResults(orders.slice(0, 3));
+    }
+  } catch(e) {}
+  btn.disabled = false;
+}
+
+function renderTrackingResults(orders) {
+  const container = document.getElementById('trackingResult');
+  container.style.display = 'block'; document.getElementById('trackingError').style.display = 'none';
+  
+  const ORDER_STATUSES = [
+    { key: 'no_autorizado', label: '❌ No Autorizado', emoji: '🚫' },
+    { key: 'pagado', label: '💰 Pagado', emoji: '💰' },
+    { key: 'pending', label: '⏳ Pendiente', emoji: '⏳' },
+    { key: 'preparando', label: '👨🍳 Preparando', emoji: '👨🍳' },
+    { key: 'en_camino', label: '🛵 En camino', emoji: '🛵' },
+    { key: 'entregado', label: '✅ Entregado', emoji: '✅' },
+  ];
+
+  container.innerHTML = orders.map(order => {
+    if (order.status === 'retirar_en_sucursal') {
+      return `
+        <div class="tracking-container">
+          <h4>Pedido #${order.id.slice(-5).toUpperCase()}</h4>
+          <div class="branch-withdrawal-alert">
+              <h5>⚠️ Retirar por la sucursal</h5>
+              <p>El transportista no te encontró. Tu pedido te espera en caja.</p>
+          </div>
+          <button class="btn-track-premium" onclick="window.openTicketModal('${order.id}', '${order.customer?.dni}')">MI TICKET</button>
+        </div>
+      `;
+    }
+
+    const currentIndex = ORDER_STATUSES.findIndex(s => s.key === order.status);
+    const progressPct = currentIndex < 0 ? 0 : Math.round((currentIndex / (ORDER_STATUSES.length - 1)) * 100);
+    
+    return `
+      <div class="tracking-container">
+        <h4>Pedido #${order.id.slice(-5).toUpperCase()}</h4>
+        <div class="tracking-bar">
+          <div class="tracking-progress-fill" style="width: ${progressPct}%;">
+            <div class="tracking-icon-carrier">🛵</div>
+          </div>
+          ${ORDER_STATUSES.map((s, i) => `
+            <div class="tracking-step ${i < currentIndex ? 'done' : i === currentIndex ? 'active' : ''}">
+              <div class="step-dot"></div>
+              <span class="step-label">${s.emoji} ${s.label.split(' ').slice(1).join(' ')}</span>
+            </div>
+          `).join('')}
+        </div>
+        <button class="btn-track-premium" onclick="window.openTicketModal('${order.id}', '${order.customer?.dni}')">MI TICKET</button>
+      </div>
+    `;
+  }).join('');
+}
+
+window.openTicketModal = function(id, dni) {
+  document.getElementById('ticketCode').textContent = '#' + id.slice(-5).toUpperCase();
+  document.getElementById('ticketDNI').textContent = dni || 'N/A';
+  
+  // Limpiar y generar QR
+  const qrContainer = document.getElementById('ticketQR');
+  if (qrContainer) {
+    qrContainer.innerHTML = '';
+    new QRCode(qrContainer, { text: id, width: 150, height: 150 });
+  }
+
   document.getElementById('ticketModal').classList.add('open');
   document.getElementById('ticketModalOverlay').classList.add('open');
-};
+}
 
 function closeTicketModal() {
   document.getElementById('ticketModal').classList.remove('open');
   document.getElementById('ticketModalOverlay').classList.remove('open');
 }
 
-document.getElementById('ticketModalCloseBtn')?.addEventListener('click', closeTicketModal);
-document.getElementById('ticketModalOverlay')?.addEventListener('click', closeTicketModal);
+function showToast(message, type = 'success') {
+  toastMessage.textContent = message; toastMessage.className = `toast show ${type}`;
+  setTimeout(() => toastMessage.classList.remove('show'), 3000);
+}
