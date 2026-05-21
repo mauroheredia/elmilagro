@@ -290,6 +290,9 @@ function setupEventListeners() {
   });
 
   document.getElementById('closeCartBtn')?.addEventListener('click', closeCart);
+  document.getElementById('mobileBackCartBtn')?.addEventListener('click', closeCart);
+  document.getElementById('continueShoppingBtn')?.addEventListener('click', closeCart);
+  document.getElementById('cartOverlay')?.addEventListener('click', closeCart);
   document.getElementById('cartOverlay')?.addEventListener('click', closeCart);
   
   document.getElementById('checkoutBtn')?.addEventListener('click', openCheckout);
