@@ -586,7 +586,12 @@ window.openTicketModal = function(id, dni) {
   const qrContainer = document.getElementById('ticketQR');
   if (qrContainer) {
     qrContainer.innerHTML = '';
-    new QRCode(qrContainer, { text: id, width: 150, height: 150 });
+    new QRCode(qrContainer, {
+      text: id.trim(),
+      width: 150,
+      height: 150,
+      correctLevel: QRCode.CorrectLevel.H
+    });
   }
 
   document.getElementById('ticketModal').classList.add('open');
