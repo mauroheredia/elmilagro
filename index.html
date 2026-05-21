@@ -69,8 +69,11 @@
   <!-- Cart Sidebar -->
   <div class="overlay cart-overlay" id="cartOverlay"></div>
   <aside class="cart-sidebar glass-panel" id="cartSidebar">
-    <div class="cart-header">
-      <h2>Tu Pedido</h2>
+    <div class="cart-header" style="display: flex; align-items: center; justify-content: space-between;">
+      <div style="display: flex; align-items: center;">
+        <button id="mobileBackCartBtn" style="border: none; background: none; font-size: 1.5rem; cursor: pointer; color: var(--text); margin-right: 0.5rem; display: flex; align-items: center; padding: 0.5rem;">←</button>
+        <h2 style="margin:0;">Tu Pedido</h2>
+      </div>
       <button class="close-cart" id="closeCartBtn">✕</button>
     </div>
     
@@ -85,6 +88,7 @@
         <span id="cartTotalText">$0.00</span>
       </div>
       <button class="btn btn-primary btn-checkout" id="checkoutBtn">Finalizar Compra</button>
+      <button class="btn btn-outline" id="continueShoppingBtn" style="width: 100%; margin-top: 0.5rem; font-weight: 700;">⬅ Volver atrás</button>
     </div>
   </aside>
 
