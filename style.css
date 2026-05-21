@@ -1033,3 +1033,7 @@ input:focus, textarea:focus, select:focus {
 
 /* ---- PULL-TO-REFRESH LOCK en modales ---- */
 .cart-sidebar, .modal-base, .checkout-modal { overscroll-behavior: contain; }
+
+[data-theme="dark"] .close-cart {
+  color: white !important;
+}
