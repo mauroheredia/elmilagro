@@ -301,6 +301,11 @@ function setupEventListeners() {
   document.getElementById('modalCloseBtn')?.addEventListener('click', closeProductModal);
   document.getElementById('productModalOverlay')?.addEventListener('click', closeProductModal);
 
+  document.getElementById('stickyCartBtn')?.addEventListener('click', () => {
+    document.getElementById('cartSidebar').classList.add('open');
+    document.getElementById('cartOverlay').classList.add('open');
+  });
+
   document.getElementById('btnTrackOrder')?.addEventListener('click', openTrackingModal);
   document.getElementById('trackingModalCloseBtn')?.addEventListener('click', closeTrackingModal);
   document.getElementById('trackingModalOverlay')?.addEventListener('click', closeTrackingModal);
@@ -406,6 +411,19 @@ function renderCart() {
     cartItemsContainer.appendChild(div);
   });
   cartTotalText.textContent = `$${total.toLocaleString('es-AR')}`;
+
+  const bar = document.getElementById('stickyCartBar');
+  const count = document.getElementById('stickyCartCount');
+  const stickyTotal = document.getElementById('stickyCartTotal');
+  if (bar) {
+    if (cart.length > 0) {
+      bar.style.display = 'flex';
+      count.textContent = cart.reduce((s,i) => s + (i.qty||1), 0) + ' productos';
+      stickyTotal.textContent = '$' + cart.reduce((s,i) => s + i.price * (i.qty||1), 0).toLocaleString('es-AR');
+    } else {
+      bar.style.display = 'none';
+    }
+  }
 }
 
 // 6. Checkout con DNI/Phone Seguro
