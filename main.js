@@ -276,6 +276,46 @@ function createProductCard(product) {
 
 // Modales, Carrito y Tracking
 function setupEventListeners() {
+  // ── Hamburger / Category Drawer ──
+  const hamburgerBtn = document.getElementById('hamburgerBtn');
+  const catDrawer = document.getElementById('catDrawer');
+  const catDrawerOverlay = document.getElementById('catDrawerOverlay');
+  const catDrawerClose = document.getElementById('catDrawerClose');
+
+  function openDrawer() {
+    catDrawer?.classList.add('open');
+    catDrawerOverlay?.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeDrawer() {
+    catDrawer?.classList.remove('open');
+    catDrawerOverlay?.classList.remove('open');
+    document.body.style.overflow = '';
+  }
+  hamburgerBtn?.addEventListener('click', openDrawer);
+  catDrawerClose?.addEventListener('click', closeDrawer);
+  catDrawerOverlay?.addEventListener('click', closeDrawer);
+
+  // Cerrar drawer al elegir categoría en mobile
+  document.getElementById('categoryContainer')?.addEventListener('click', (e) => {
+    if (e.target.classList.contains('category-pill')) closeDrawer();
+  });
+
+  // ── Búsqueda desktop ──
+  document.getElementById('searchInputDesktop')?.addEventListener('input', e => {
+    searchQuery = e.target.value.toLowerCase();
+    document.getElementById('searchInput').value = e.target.value; // sync
+    renderProducts();
+  });
+
+  // ── Cart / Track / Mi Pedido desktop duplicado ──
+  document.getElementById('cartToggleBtnDesktop')?.addEventListener('click', () => {
+    document.getElementById('cartSidebar').classList.add('open');
+    document.getElementById('cartOverlay').classList.add('open');
+  });
+  document.getElementById('btnTrackOrderDesktop')?.addEventListener('click', openTrackingModal);
+
+  // ── Listeners mobile originales ──
   const searchInput = document.getElementById('searchInput');
   if (searchInput) {
     searchInput.addEventListener('input', e => {
@@ -291,13 +331,13 @@ function setupEventListeners() {
 
   document.getElementById('closeCartBtn')?.addEventListener('click', closeCart);
   document.getElementById('cartOverlay')?.addEventListener('click', closeCart);
-  
+
   document.getElementById('checkoutBtn')?.addEventListener('click', openCheckout);
   document.getElementById('checkoutModalCloseBtn')?.addEventListener('click', closeCheckout);
   document.getElementById('checkoutModalOverlay')?.addEventListener('click', closeCheckout);
-  
+
   document.getElementById('checkoutForm')?.addEventListener('submit', submitCheckout);
-  
+
   document.getElementById('modalCloseBtn')?.addEventListener('click', closeProductModal);
   document.getElementById('productModalOverlay')?.addEventListener('click', closeProductModal);
 
